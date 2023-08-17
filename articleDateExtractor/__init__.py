@@ -4,6 +4,7 @@ import json
 import re
 from datetime import datetime
 
+import pytz
 from datefinder import find_dates
 from webhose_metrics import count as metrics_count
 
@@ -191,6 +192,7 @@ def get_relevant_date(url, html=None):
 
     possible_dates = [date for date_list in [url_base_dates, jsonld_base_dates, meta_base_dates, html_tags_base_dates] for date in date_list]
     possible_dates = filter(lambda _date: _date is not None and isinstance(_date, datetime), possible_dates)
+    possible_dates = [_date.replace(tzinfo=pytz.UTC) for _date in possible_dates]
     # Add this row in python 3
     # if not possible_dates:
     #     possible_dates.extend(extract_from_title_area(html))

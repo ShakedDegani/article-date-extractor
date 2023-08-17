@@ -23,7 +23,9 @@ setup(
         "python-dateutil",
         "dateparser",
         "datefinder",
-        "timeout-decorator"
+        "timeout-decorator",
+        "requests",
+        "pytz"
     ],
     classifiers=(
         'Development Status :: 4 - Beta',
