@@ -59,7 +59,6 @@ def parse_str_date(date_string):
 def filter_dates(dates):
     possible_dates = [date for date in dates if
                       timedelta(days=-1) < datetime.now() - date < timedelta(days=365)]
-    possible_dates = [_date.replace(tzinfo=pytz.UTC) for _date in possible_dates]
 
     possible_dates_dict = {}
     possible_date_times = []

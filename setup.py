@@ -19,8 +19,11 @@ setup(
     description='Automatically extracts and normalizes an online article or blog post publication date',
     long_description=readme,
     install_requires=[
-        "beautifulsoup4 >= 4.6.0",
-        "python-dateutil >= 2.4.2"
+        "beautifulsoup4",
+        "python-dateutil",
+        "dateparser",
+        "datefinder",
+        "timeout-decorator"
     ],
     classifiers=(
         'Development Status :: 4 - Beta',
