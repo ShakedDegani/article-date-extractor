@@ -1,7 +1,6 @@
 import re
 from datetime import datetime, timedelta
 
-import pytz
 import requests
 from dateparser import parse
 from dateutil.parser import parse
@@ -21,7 +20,8 @@ def get_html_response(url):
     """
     try:
         return requests.get(url).text
-    except Exception:
+    except Exception as request_error:
+        logger_handler.error(request_error)
         return ""
 
 
@@ -57,12 +57,9 @@ def parse_str_date(date_string):
 
 
 def filter_dates(dates):
-    possible_dates = [date for date in dates if
-                      timedelta(days=-1) < datetime.now() - date < timedelta(days=365)]
-
     possible_dates_dict = {}
     possible_date_times = []
-    for date in possible_dates:
+    for date in dates:
         date_str = date.date().__str__()
         if date_str not in possible_dates_dict:
             possible_dates_dict[date_str] = []
