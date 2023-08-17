@@ -41,21 +41,23 @@ def _extract_by_tag(tag, parsed_html, attr):
 def extract_from_ld_json(parsed_html):
     dates = []
     try:
-        script = parsed_html.find('script', type='application/ld+json')
-        if script is None:
+        scripts = parsed_html.findAll('script', attrs={"type": 'application/ld+json'})
+        if scripts is None:
             return dates
 
-        script_data = {}
-        if any([script.text, script.string]):
-            script_data = json.loads(script.text or script.string)
-        if isinstance(script_data, dict):
-            script_data = [script_data]
+        for script in scripts:
 
-        for data in script_data:
-            json_date = utils.parse_str_date(data.get('dateCreated', None)) or utils.parse_str_date(
-                data.get('datePublished', None))
-            if json_date:
-                return [json_date]
+            script_data = {}
+            if any([script.text, script.string]):
+                script_data = json.loads(script.text or script.string)
+            if isinstance(script_data, dict):
+                script_data = [script_data]
+
+            for data in script_data:
+                json_date = utils.parse_str_date(data.get('dateCreated', None)) or utils.parse_str_date(
+                    data.get('datePublished', None))
+                if json_date:
+                    return [json_date]
     except Exception as error:
         logger_handler.error(error)
 
@@ -113,7 +115,8 @@ def extract_from_html_tag(parsed_html):
     return []
 
 
-def extract_from_title_area(html, char_range=1000):
+# To be developed in python 3.
+def extract_from_title_area(html, char_range=250):
     """
     Find the date bellow the title, can be improved by clean the html.
     :param html: string
@@ -122,19 +125,20 @@ def extract_from_title_area(html, char_range=1000):
     """
     dates = []
     try:
-        parsed_html = BeautifulSoup(html, "html.parser")
-
-        # known tags for titles.
-        anchors = [parsed_html.find(tag) for tag in ["h1", "h2", "h3"]]
-        anchors.extend([parsed_html.find(tag, **attrs) for tag, attrs in [("div", {"class": "wb_title"})]])
-        for anchor in anchors:
-            index_match = re.search(unicode(anchor), html)
-            if index_match:
-                index = index_match.start()
-                html_for_scan = html[max(index, index - 200): min(index + char_range, len(html))]
-                matches = find_dates(html_for_scan)
+        tags = ["h1", "h2", "h3"]
+        for tag in tags:
+            pattern = u'<{tag}[^>]?>.*?</{tag}>(.*)'.format(tag=tag)
+            tag_match = re.search(pattern, html, re.DOTALL)
+            if tag_match:
+                html_below = tag_match.group(1).strip()
+                html_for_scan = re.sub(consts.SCRIPT_CLEANER, "", html_below)
+                html_for_scan = re.sub(consts.HTML_CLEANER, "", html_for_scan)
+                html_for_scan = re.sub("\s+", " ", html_for_scan, flags=re.DOTALL)[:min(len(html_for_scan), char_range)]
+                matches = find_dates(html_for_scan, source=True)
+                matches = [match for match in matches]
                 if matches:
-                    dates.extend([match for match in matches])
+                    dates.extend(matches)
+                    break
     except Exception as error:
         logger_handler.error(error)
 
@@ -187,8 +191,9 @@ def get_relevant_date(url, html=None):
 
     possible_dates = [date for date_list in [url_base_dates, jsonld_base_dates, meta_base_dates, html_tags_base_dates] for date in date_list]
     possible_dates = filter(lambda _date: _date is not None and isinstance(_date, datetime), possible_dates)
-    if not possible_dates:
-        possible_dates.extend(extract_from_title_area(html))
+    # Add this row in python 3
+    # if not possible_dates:
+    #     possible_dates.extend(extract_from_title_area(html))
 
     possible_date_times = utils.filter_dates(possible_dates)
 
@@ -199,8 +204,3 @@ def get_relevant_date(url, html=None):
 
     # return oldest date
     return min(possible_date_times)
-
-
-if __name__ == '__main__':
-    d = get_relevant_date("http://www.guangyuanol.cn/news/prnasia/2015/1004/482692.html")
-    print d

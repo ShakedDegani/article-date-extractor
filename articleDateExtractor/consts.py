@@ -1,4 +1,4 @@
-
+import re
 
 FAILED = "articleDateExtractor_failed_total"
 SUCCESS = "articleDateExtractor_success_total"
@@ -26,3 +26,6 @@ TAGS_ATTRS = {
     "id": ['span', 'p', 'div', 'li'],
     "class_": ['span', 'p', 'div']
 }
+
+SCRIPT_CLEANER = re.compile('<script[^>]*>.*?</script>', flags=re.DOTALL)
+HTML_CLEANER = re.compile('<.*?>|&([a-z0-9]+|#[0-9]{1,6}|#x[0-9a-f]{1,6});', flags=re.DOTALL)
