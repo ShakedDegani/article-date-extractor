@@ -1,0 +1,9 @@
+setuptools
+dateparser
+python-dateutil
+beautifulsoup4
+datefinder
+timeout-decorator
+requests
+pytz
+BeautifulSoup

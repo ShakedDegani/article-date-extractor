@@ -1,23 +1,19 @@
 __author__ = 'Ran Geva'
 
-import re, json
-from dateutil.parser import parse
-import dateparser
+import json
+import re
 from datetime import datetime
-from webhose_metrics import count as metrics_count
-import pytz
-from logger import Logger
 
-datetime_html_attributes_formats = "pub+|article+|date+|time+|tms+|mod+"
+import pytz
+from datefinder import find_dates
+from webhose_metrics import count as metrics_count
+
+import consts
+import utils
+from logger import Logger
 
 logger_handler = Logger(name="article_date_extractor_logger", path="/var/log/webhose/articleDateExtractor_logs",
                         level="DEBUG").get_logger()
-
-# try except for different urllib under python3 and python2
-try:
-    import urllib.request as urllib
-except ImportError:
-    import urllib2 as urllib
 
 try:
     from bs4 import BeautifulSoup, Tag
@@ -25,254 +21,150 @@ except ImportError:
     from BeautifulSoup import BeautifulSoup, Tag
 
 
-def parse_date_by_daetutil(dateString):
+def extract_from_url(url):
+    # Regex by Newspaper  - https://github.com/codelucas/newspaper/blob/master/newspaper/urls.py
+    dates = []
+    for pattern in consts.URL_REGEXPS:
+        date_match = re.search(pattern, url)
+        if date_match:
+            temp_date = utils.parse_str_date(date_match.group(0))
+            if temp_date:
+                dates.append(temp_date)
+
+    return dates
+
+
+def _extract_by_tag(tag, parsed_html, attr):
+    for tag_span in parsed_html.find_all(tag, **{attr: re.compile(consts.DATETIME_TAG_REGEX, re.IGNORECASE)}):
+        return utils.parse_str_date(tag_span.string or tag_span.text)
+
+
+def extract_from_ld_json(parsed_html):
+    dates = []
     try:
-        dateTimeObj = parse(dateString)
-        return dateTimeObj
-    except Exception as err:
-        return None
+        scripts = parsed_html.findAll('script', attrs={"type": 'application/ld+json'})
+        if scripts is None:
+            return dates
+
+        for script in scripts:
+
+            script_data = {}
+            if any([script.text, script.string]):
+                script_data = json.loads(script.text or script.string)
+            if isinstance(script_data, dict):
+                script_data = [script_data]
+
+            for data in script_data:
+                json_date = utils.parse_str_date(data.get('dateCreated', None)) or utils.parse_str_date(
+                    data.get('datePublished', None))
+                if json_date:
+                    return [json_date]
+    except Exception as error:
+        logger_handler.error(error)
+
+    return dates
 
 
-def parse_date_by_dateparser(dateString):
-    try:
-        dateTimeObj = dateparser.parse(dateString)
-        return dateTimeObj
-    except Exception as err:
-        return None
+def extract_from_meta(parsed_html):
+    meta_dates = set()
+    image_dates = []
 
+    metas = [meta for meta in parsed_html.findAll("meta")]
+    for meta in metas:
+        meta_name, meta_prop, meta_equiv, meta_property, meta_content = tuple([
+            (meta.get(attr) or "").lower().strip() for attr in consts.META_ATTRS
+        ])
 
-def parseStrDate(dateString):
-    dateTimeObj = None
-    if dateString is not None:
-        dateString = dateString.rstrip().lstrip()
-        dateTimeObj = parse_date_by_daetutil(dateString)
-        if dateTimeObj is None or "":
-            dateTimeObj = parse_date_by_dateparser(dateString)
-    return dateTimeObj
+        if any([meta_name in consts.META_NAMES, meta_prop in consts.META_PROPS, meta_equiv in consts.META_EQUIVS,
+                meta_property in consts.META_PROPS]):
+            meta_dates.add(meta_content)
 
-
-# Try to extract from the article URL - simple but might work as a fallback
-def _extractFromURL(url):
-    # Regex by Newspaper3k  - https://github.com/codelucas/newspaper/blob/master/newspaper/urls.py
-    m = re.search(
-        r'([\./\-_]{0,1}(19|20)\d{2})[\./\-_]{0,1}(([0-3]{0,1}[0-9][\./\-_])|(\w{3,5}[\./\-_]))([0-3]{0,1}[0-9][\./\-]{0,1})?',
-        url)
-    if m:
-        return parseStrDate(m.group(0))
-
-    return None
-
-
-def _extract_by_tag(tag, parsedHTML, attr):
-    for tag_span in parsedHTML.find_all(tag, **{attr: re.compile(datetime_html_attributes_formats, re.IGNORECASE)}):
-        dateText = tag_span.string or tag_span.text
-        return parseStrDate(dateText)
-
-
-def _extractFromLDJson(parsedHTML):
-    try:
-        script = parsedHTML.find('script', type='application/ld+json')
-        if script is None:
-            logger_handler.debug("ERROR: [_extractFromLDJson] - script none")
-            return None
-        if len(script.text):
-            script_data = json.loads(script.text)
-        elif len(script.string):
-            script_data = json.loads(script.string)
-        if isinstance(script_data, dict):
-            script_data = [script_data]
-        for data in script_data:
-            jsonDate = parseStrDate(data.get('dateCreated', None)) or parseStrDate(data.get('datePublished', None))
-            if jsonDate:
-                return jsonDate
-    except Exception as err:
-        logger_handler.debug("ERROR: [_extractFromLDJson] - {err}".format(err=err))
-
-    return None
-
-
-def _extractFromMeta(parsedHTML):
-    metaDate = None
-    for meta in parsedHTML.findAll("meta"):
-        metaName = meta.get('name', '').lower()
-        itemProp = meta.get('itemprop', '').lower()
-        httpEquiv = meta.get('http-equiv', '').lower()
-        metaProperty = meta.get('property', '').lower()
-
-        # <meta name="pubdate" content="2015-11-26T07:11:02Z" >
-        if 'pubdate' == metaName:
-            metaDate = meta['content'].strip()
-            break
-
-        # <meta name='publishdate' content='201511261006'/>
-        if 'publishdate' == metaName:
-            metaDate = meta['content'].strip()
-            break
-
-        # <meta name="timestamp"  data-type="date" content="2015-11-25 22:40:25" />
-        if 'timestamp' == metaName:
-            metaDate = meta['content'].strip()
-            break
-
-        # <meta name="DC.date.issued" content="2015-11-26">
-        if 'dc.date.issued' == metaName:
-            metaDate = meta['content'].strip()
-            break
-
-        # <meta property="article:published_time"  content="2015-11-25" />
-        if 'article:published_time' == metaProperty:
-            metaDate = meta['content'].strip()
-            break
-            # <meta name="Date" content="2015-11-26" />
-        if 'date' == metaName:
-            metaDate = meta['content'].strip()
-            break
-
-        # <meta property="bt:pubDate" content="2015-11-26T00:10:33+00:00">
-        if 'bt:pubdate' == metaProperty:
-            metaDate = meta['content'].strip()
-            break
-            # <meta name="sailthru.date" content="2015-11-25T19:56:04+0000" />
-        if 'sailthru.date' == metaName:
-            metaDate = meta['content'].strip()
-            break
-
-        # <meta name="article.published" content="2015-11-26T11:53:00.000Z" />
-        if 'article.published' == metaName:
-            metaDate = meta['content'].strip()
-            break
-
-        # <meta name="published-date" content="2015-11-26T11:53:00.000Z" />
-        if 'published-date' == metaName:
-            metaDate = meta['content'].strip()
-            break
-
-        # <meta name="article.created" content="2015-11-26T11:53:00.000Z" />
-        if 'article.created' == metaName:
-            metaDate = meta['content'].strip()
-            break
-
-        # <meta name="article_date_original" content="Thursday, November 26, 2015,  6:42 AM" />
-        if 'article_date_original' == metaName:
-            metaDate = meta['content'].strip()
-            break
-
-        # <meta name="cXenseParse:recs:publishtime" content="2015-11-26T14:42Z"/>
-        if 'cxenseparse:recs:publishtime' == metaName:
-            metaDate = meta['content'].strip()
-            break
-
-        # <meta name="DATE_PUBLISHED" content="11/24/2015 01:05AM" />
-        if 'date_published' == metaName:
-            metaDate = meta['content'].strip()
-            break
-
-        # <meta itemprop="datePublished" content="2015-11-26T11:53:00.000Z" />
-        if 'datepublished' == itemProp:
-            metaDate = meta['content'].strip()
-            break
-
-        # <meta itemprop="datePublished" content="2015-11-26T11:53:00.000Z" />
-        if 'datecreated' == itemProp:
-            metaDate = meta['content'].strip()
-            break
-
-        # <meta property="og:image" content="http://www.dailytimes.com.pk/digital_images/400/2015-11-26/norway-return-number-of-asylum-seekers-to-pakistan-1448538771-7363.jpg"/>
-        if 'og:image' == metaProperty or "image" == itemProp:
+        # get date from main image url
+        if 'og:image' == meta_property or "image" == meta_prop:
             url = meta['content'].strip()
-            possibleDate = _extractFromURL(url)
-            if possibleDate is not None:
-                return possibleDate
+            image_dates = extract_from_url(url)
 
-        # <meta http-equiv="data" content="10:27:15 AM Thursday, November 26, 2015">
-        if 'date' == httpEquiv:
-            metaDate = meta['content'].strip()
-            break
-
-        logger_handler.debug(
-            "ERROR-INFO- [_extractFromMeta] - not found properties for meta: {metadata}".format(metadata=meta))
-
-    if metaDate is not None:
-        return parseStrDate(metaDate)
-
-    logger_handler.debug("ERROR: [_extractFromMeta] - Failed to parse from meta properties")
-    return None
+    if meta_dates:
+        return [utils.parse_str_date(date) for date in meta_dates] + image_dates
+    return []
 
 
-def _extractFromHTMLTag(parsedHTML):
-    list_of_times_attribute = parsedHTML.findAll("time")
+def extract_from_html_tag(parsed_html):
+    list_of_times_attribute = parsed_html.findAll("time")
     # <time>
     for time in list_of_times_attribute:
-        datetime = time.get('datetime', '')
-        if len(datetime) > 0:
-            return parseStrDate(datetime)
+        date_time = time.get('datetime', '')
+        if len(date_time) > 0:
+            return [utils.parse_str_date(date_time)]
 
-        datetime = time.get('class', '')
-        if len(datetime) > 0:
-            # and datetime[0].lower() == "timestamp":
+        date_time = time.get('class', '')
+        if len(date_time) > 0:
             date_string = time.string or time.text
-            return parseStrDate(date_string)
+            return [utils.parse_str_date(date_string)]
 
-    tag = parsedHTML.find("span", {"itemprop": "datePublished"})
+    tag = parsed_html.find("span", {"itemprop": "datePublished"})
     if tag is not None:
-        dateText = tag.get("content")
-        if dateText is None:
-            dateText = tag.text
-        if dateText is not None:
-            return parseStrDate(dateText)
+        date_text = tag.get("content") or tag.text
+        if date_text is not None:
+            return [utils.parse_str_date(date_text)]
 
-    possibleDate = _extract_by_tag(['span', 'p', 'div'], parsedHTML, attr='class_')
-    if possibleDate is not None and possibleDate != '':
-        return possibleDate
+    for attr, tags in consts.TAGS_ATTRS.items():
+        possible_date = _extract_by_tag(tags, parsed_html, attr=attr)
+        if possible_date:
+            return [possible_date]
 
-    possibleDate = _extract_by_tag(['span', 'p', 'div', 'li'], parsedHTML, attr='id')
-    if possibleDate is not None and possibleDate != '':
-        return possibleDate
-
-    logger_handler.debug("ERROR- [_extractFromHTMLTag] - Failed to parse from HTML tags")
-    return None
+    return []
 
 
-def extractArticlePublishedDate(articleLink, html=None):
-    print("Extracting date from " + articleLink)
-
-    articleDate = None
-
+# To be developed in python 3.
+def extract_from_title_area(html, char_range=250):
+    """
+    Find the date bellow the title, can be improved by clean the html.
+    :param html: string
+    :param char_range: how many chars to search the date in.
+    :return: list of datetimes
+    """
+    dates = []
     try:
-        articleDate = _extractFromURL(articleLink)
+        tags = ["h1", "h2", "h3"]
+        for tag in tags:
+            pattern = u'<{tag}[^>]?>.*?</{tag}>(.*)'.format(tag=tag)
+            tag_match = re.search(pattern, html, re.DOTALL)
+            if tag_match:
+                html_below = tag_match.group(1).strip()
+                html_for_scan = re.sub(consts.SCRIPT_CLEANER, "", html_below)
+                html_for_scan = re.sub(consts.HTML_CLEANER, "", html_for_scan)
+                html_for_scan = re.sub("\s+", " ", html_for_scan, flags=re.DOTALL)[:min(len(html_for_scan), char_range)]
+                matches = find_dates(html_for_scan, source=True)
+                matches = [match for match in matches]
+                if matches:
+                    dates.extend(matches)
+                    break
+    except Exception as error:
+        logger_handler.error(error)
 
+    return dates
+
+
+def extractArticlePublishedDate(article_link, html=None):
+    article_date = None
+    try:
+        article_date = extract_from_url(article_link)
         if html is None:
-            html = _get_html_response(articleLink)
+            html = utils.get_html_response(article_link)
 
-        parsedHTML = BeautifulSoup(html, "lxml")
+        parsed_html = BeautifulSoup(html, "lxml")
 
-        possibleDate = _extractFromLDJson(parsedHTML)
-        if possibleDate is None:
-            possibleDate = _extractFromMeta(parsedHTML)
-        if possibleDate is None:
-            possibleDate = _extractFromHTMLTag(parsedHTML)
+        possible_date = extract_from_ld_json(parsed_html)
+        if possible_date is None:
+            possible_date = extract_from_meta(parsed_html)
+        if possible_date is None:
+            possible_date = extract_from_html_tag(parsed_html)
+        article_date = possible_date
+    except Exception as error:
+        logger_handler.error(error)
 
-        articleDate = possibleDate
-
-    except Exception as e:
-        logger_handler.debug(
-            "ERROR-INFO- [extractArticlePublishedDate] - Exception for {link}".format(link=articleLink))
-        print("Exception in extractArticlePublishedDate for " + articleLink)
-        print(e.args)
-
-    return articleDate
-
-
-def _get_html_response(url):
-    """
-    simple request execution
-    :param url: string of url
-    :return: html response
-    """
-    request = urllib.Request(url)
-    html = urllib.build_opener().open(request).read()
-    logger_handler.info("Request - {url}".format(url=url))
-    return html
+    return article_date
 
 
 def get_relevant_date(url, html=None):
@@ -280,54 +172,37 @@ def get_relevant_date(url, html=None):
     retrieves the most relevant published date for an article
     :param url: string of url
     :param html: string of html response (to avoid request execution)
-    :return: oldest date from the following options:
+    :return: the oldest date from the following options:
         1) date in the url
         2) headers of the response (json-ld, meta, etc.)
         3) html known tags
+        4) 200 chars above title - 1000 chars bellow the title (on not clean html)
+        Note: we currently filter out 1d < date < 1Y dates.
     """
     # getting date by input url
-    url_base_date = _extractFromURL(url)
+    url_base_dates = extract_from_url(url)
     # bs parsing for extended data
-    html = html or _get_html_response(url)
+    html = html or utils.get_html_response(url)
     parsed_html = BeautifulSoup(html, "lxml")
 
     # extended dates (json-ld, html tags, etc.)
-    jsonld_base_date = _extractFromLDJson(parsed_html)
-    meta_base_date = _extractFromMeta(parsed_html)
-    html_tags_base_date = _extractFromHTMLTag(parsed_html)
+    jsonld_base_dates = extract_from_ld_json(parsed_html)
+    meta_base_dates = extract_from_meta(parsed_html)
+    html_tags_base_dates = extract_from_html_tag(parsed_html)
 
-    possible_dates = [url_base_date, jsonld_base_date, meta_base_date, html_tags_base_date]
+    possible_dates = [date for date_list in [url_base_dates, jsonld_base_dates, meta_base_dates, html_tags_base_dates] for date in date_list]
     possible_dates = filter(lambda _date: _date is not None and isinstance(_date, datetime), possible_dates)
     possible_dates = [_date.replace(tzinfo=pytz.UTC) for _date in possible_dates]
+    # Add this row in python 3
+    # if not possible_dates:
+    #     possible_dates.extend(extract_from_title_area(html))
 
-    possible_dates_dict = {}
-    possible_datetimes = []
-    for date in possible_dates:
-        date_str = date.date().__str__()
-        if not date_str in possible_dates_dict:
-            possible_dates_dict[date_str] = []
-        possible_dates_dict[date_str].append(date)
+    possible_date_times = utils.filter_dates(possible_dates)
 
-    for date_str, list_of_dates in possible_dates_dict.items():
-        list_of_dates_with_times = []
-        for index, temp_date in enumerate(list_of_dates):
-            if temp_date.hour or temp_date.minute or index == len(list_of_dates) - 1:
-                list_of_dates_with_times.append(temp_date)
-
-        possible_datetimes.extend(list_of_dates_with_times)
-
-    metrics_count(
-        name="articleDateExtractor_success_total" if len(
-            possible_datetimes) != 0 else "articleDateExtractor_failed_total",
-        value=1)
-
-    if len(possible_datetimes) == 0:
+    metrics_count(name=consts.SUCCESS if possible_date_times else consts.FAILED)
+    if len(possible_date_times) == 0:
         logger_handler.info("[get_relevant_date] - None possible dates for {url}".format(url=url))
         return None
 
     # return oldest date
-    return min(possible_datetimes)
-
-
-if __name__ == '__main__':
-    d = get_relevant_date("https://elegantessence.tumblr.com/post/716279737919602688")
+    return min(possible_date_times)

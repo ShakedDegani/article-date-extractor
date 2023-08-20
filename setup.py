@@ -11,7 +11,7 @@ with open('README.md', 'r', 'utf-8') as f:
 setup(
     name='webz-article-date-extractor',
     packages=['articleDateExtractor'],
-    version='0.21.3',
+    version='0.21.4',
     author='Ran Geva',
     author_email='ran@webhose.io, yitao.sun@yahoo.com, wilson.s.shilo@gmail.com',
     url='https://github.com/Webhose/article-date-extractor',
@@ -19,8 +19,13 @@ setup(
     description='Automatically extracts and normalizes an online article or blog post publication date',
     long_description=readme,
     install_requires=[
-        "beautifulsoup4 >= 4.6.0",
-        "python-dateutil >= 2.4.2"
+        "beautifulsoup4",
+        "python-dateutil",
+        "dateparser",
+        "datefinder",
+        "timeout-decorator",
+        "requests",
+        "pytz"
     ],
     classifiers=(
         'Development Status :: 4 - Beta',
