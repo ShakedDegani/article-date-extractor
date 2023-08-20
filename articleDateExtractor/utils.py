@@ -41,7 +41,7 @@ def parse_date_by_dateparser(date_string):
         logger_handler.error(error)
 
 
-@timeout(0.5)
+@timeout(0.5, use_signals=False)
 def timed_parse(date_to_parse):
     return parse_date_by_daetutil(date_to_parse) or parse_date_by_dateparser(date_to_parse)
 
