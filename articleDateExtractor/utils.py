@@ -7,6 +7,7 @@ from dateutil.parser import parse
 from timeout_decorator import timeout
 
 from logger import Logger
+import consts
 
 logger_handler = Logger(name="article_date_extractor_logger", path="/var/log/webhose/articleDateExtractor_logs",
                         level="DEBUG").get_logger()
@@ -74,3 +75,19 @@ def filter_dates(dates):
         possible_date_times.extend(list_of_dates_with_times)
 
     return possible_date_times
+
+
+def translate_months(month):
+    month = month.lower()
+
+    # those are problematic months that have to be tested before the rest
+    for translation, name in consts.PRE_MONTHS_TRANSLATION.items():
+        if re.search(translation, month, re.IGNORECASE | re.UNICODE | re.DOTALL):
+            return name
+
+    for name, translations in consts.MONTHS_TRANSLATION.items():
+        for translation in translations:
+            if re.search(translation, month, re.IGNORECASE | re.UNICODE | re.DOTALL):
+                return name
+
+    return month

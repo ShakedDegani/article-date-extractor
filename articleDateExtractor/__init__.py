@@ -3,6 +3,7 @@ __author__ = 'Ran Geva'
 import json
 import re
 from datetime import datetime
+from urlparse import unquote
 
 import pytz
 from datefinder import find_dates
@@ -50,7 +51,7 @@ def extract_from_ld_json(parsed_html):
 
             script_data = {}
             if any([script.text, script.string]):
-                script_data = json.loads(script.text or script.string)
+                script_data = json.loads(script.text or script.string, strict=False)
             if isinstance(script_data, dict):
                 script_data = [script_data]
 
@@ -108,6 +109,12 @@ def extract_from_html_tag(parsed_html):
         if date_text is not None:
             return [utils.parse_str_date(date_text)]
 
+    tag = parsed_html.find("abbr", {"itemprop": "datePublished"})
+    if tag is not None:
+        date_text = tag.get("content") or tag.get("title") or tag.text
+        if date_text is not None:
+            return [utils.parse_str_date(date_text)]
+
     for attr, tags in consts.TAGS_ATTRS.items():
         possible_date = _extract_by_tag(tags, parsed_html, attr=attr)
         if possible_date:
@@ -117,33 +124,37 @@ def extract_from_html_tag(parsed_html):
 
 
 # To be developed in python 3.
-def extract_from_title_area(html, char_range=250):
+def extract_from_title_area(html, char_range=750):
     """
     Find the date bellow the title, can be improved by clean the html.
     :param html: string
     :param char_range: how many chars to search the date in.
     :return: list of datetimes
     """
-    dates = []
     try:
         tags = ["h1", "h2", "h3"]
         for tag in tags:
-            pattern = u'<{tag}[^>]?>.*?</{tag}>(.*)'.format(tag=tag)
-            tag_match = re.search(pattern, html, re.DOTALL)
-            if tag_match:
+            pattern = u'<{tag}[^>]*>.*?</{tag}>(.*)'.format(tag=tag)
+            tag_matches = re.finditer(pattern, html, re.DOTALL | re.UNICODE | re.IGNORECASE)
+            for tag_match in tag_matches:
                 html_below = tag_match.group(1).strip()
-                html_for_scan = re.sub(consts.SCRIPT_CLEANER, "", html_below)
-                html_for_scan = re.sub(consts.HTML_CLEANER, "", html_for_scan)
+                html_for_scan = re.sub(consts.SCRIPT_CLEANER, " ", html_below)
+                html_for_scan = re.sub(consts.HTML_CLEANER, " ", html_for_scan)
                 html_for_scan = re.sub("\s+", " ", html_for_scan, flags=re.DOTALL)[:min(len(html_for_scan), char_range)]
-                matches = find_dates(html_for_scan, source=True)
-                matches = [match for match in matches]
-                if matches:
-                    dates.extend(matches)
-                    break
+                for rex, need_translate in consts.DATE_FORMATS.items():
+                    match = re.search(rex, html_for_scan, re.DOTALL)
+                    if match:
+                        date_str = "%s-%s-%s" % (
+                            match.group(1),
+                            utils.translate_months(match.group(2)) if need_translate else match.group(2),
+                            match.group(3))
+                        date = utils.parse_str_date(date_str)
+                        if date:
+                            return [date]
     except Exception as error:
         logger_handler.error(error)
 
-    return dates
+    return []
 
 
 def extractArticlePublishedDate(article_link, html=None):
@@ -181,6 +192,12 @@ def get_relevant_date(url, html=None):
     """
     # getting date by input url
     url_base_dates = extract_from_url(url)
+    try:
+        encode_url = unquote(url)
+        if not url == encode_url:
+            url_base_dates.extend(extract_from_url(encode_url))
+    except Exception:
+        pass
     # bs parsing for extended data
     html = html or utils.get_html_response(url)
     parsed_html = BeautifulSoup(html, "lxml")
@@ -194,8 +211,8 @@ def get_relevant_date(url, html=None):
     possible_dates = filter(lambda _date: _date is not None and isinstance(_date, datetime), possible_dates)
     possible_dates = [_date.replace(tzinfo=pytz.UTC) for _date in possible_dates]
     # Add this row in python 3
-    # if not possible_dates:
-    #     possible_dates.extend(extract_from_title_area(html))
+    if not possible_dates:
+        possible_dates.extend(extract_from_title_area(html))
 
     possible_date_times = utils.filter_dates(possible_dates)
 
