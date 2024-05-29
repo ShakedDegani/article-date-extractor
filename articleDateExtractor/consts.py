@@ -7,7 +7,11 @@ DATETIME_TAG_REGEX = "pub+|article+|date+|time+|tms+|mod+"
 
 URL_REGEXPS = [
     r'([./\-_]?(19|20)\d{2})[./\-_]?(([0-3]?[0-9][./\-_])|(\w{3,5}[./\-_]))([0-3]?[0-9][./\-]?)?',
-    r'(\d{8,12})'
+    r'(\d{8,12})',
+    r'(\d{4}-\d{2}-\d{2})',
+    r'(\d{2}-\d{2}-\d{4})',
+    r'(\d{2}/\d{2}/\d{4})',
+    r'(\d{4}/\d{2}/\d{2})',
 ]
 
 META_NAMES = [
@@ -16,12 +20,12 @@ META_NAMES = [
     "article.published", "published-date",
     "article.created", "article_date_original",
     "cxenseparse:recs:publishtime", "date_published",
-    "citation_publication_date"
+    "citation_publication_date", "article:published_time"
 ]
 META_PROPERTIES = [
     "bt:pubdate", "og:release_date", "datepublished",
     "datecreated", "article:published_time", "og:publish_date",
-    "startdate"
+    "startdate", "publish-date"
 ]
 META_PROPS = [
     "datepublished", "datecreated", "article:published_time",
@@ -41,7 +45,7 @@ HTML_CLEANER = re.compile('<.*?>|&([a-z0-9]+|#[0-9]{1,6}|#x[0-9a-f]{1,6});', fla
 
 DATE_FORMATS = {
     r'([a-zA-Z]+)\s*(\d{1,2}[a-zA-Z]*)\s*,?\s*(\d{4})': False,  # December (25st/25) (,/) 2023
-    r'(\d{1,2})\s*([a-zA-Z]+)\s*(\d{4})': False,  # 30 December 2023
+    r'(\d{1,2})\s*([a-zA-Z]+)\s*,?\s*(\d{4})': False,  # 30 December 2023
     r'(\d{1,4})\s*/\s*(\d{1,4})\s*/\s*(\d{1,4})': False,  # 30/5/2023 / 2023/30/5
     r'(\d{1,4})\s*\.\s*(\d{1,4})\s*\.\s*(\d{1,4})': False,  # 20.8.2023
     r'(\d{1,4})\s*-\s*(\d{1,4})\s*-\s*(\d{1,4})': False,  # 20-8-2023
