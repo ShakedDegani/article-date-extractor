@@ -29,7 +29,7 @@ def extract_from_url(url):
         date_match = re.search(pattern, url)
         if date_match:
             temp_date = utils.parse_str_date(date_match.group(0))
-            if temp_date:
+            if temp_date and temp_date.year > 2000 and temp_date.year < datetime.now().year + 1:
                 dates.append(temp_date)
 
     return dates
@@ -57,7 +57,7 @@ def extract_from_ld_json(parsed_html):
 
             for data in script_data:
                 json_date = utils.parse_str_date(data.get('dateCreated', None)) or utils.parse_str_date(
-                    data.get('datePublished', None))
+                    data.get('datePublished', None)) or utils.parse_str_date(data.get('uploadDate', None))
                 if json_date:
                     return [json_date]
     except Exception as error:
@@ -77,7 +77,7 @@ def extract_from_meta(parsed_html):
         ])
 
         if any([meta_name in consts.META_NAMES, meta_prop in consts.META_PROPS, meta_equiv in consts.META_EQUIVS,
-                meta_property in consts.META_PROPS]):
+                meta_property in consts.META_PROPERTIES]):
             meta_dates.add(meta_content)
 
         # get date from main image url
@@ -87,7 +87,7 @@ def extract_from_meta(parsed_html):
 
     if meta_dates:
         return [utils.parse_str_date(date) for date in meta_dates] + image_dates
-    return []
+    return [] + image_dates
 
 
 def extract_from_html_tag(parsed_html):
@@ -96,12 +96,15 @@ def extract_from_html_tag(parsed_html):
     for time in list_of_times_attribute:
         date_time = time.get('datetime', '')
         if len(date_time) > 0:
-            return [utils.parse_str_date(date_time)]
+            _date_time = date_time.replace("MSK", " ")
+            return [utils.parse_str_date(_date_time)]
 
         date_time = time.get('class', '')
         if len(date_time) > 0:
             date_string = time.string or time.text
-            return [utils.parse_str_date(date_string)]
+            date_from_string = utils.parse_str_date(date_string)
+            if date_from_string:
+                return [date_from_string]
 
     tag = parsed_html.find("span", {"itemprop": "datePublished"})
     if tag is not None:
@@ -134,10 +137,10 @@ def extract_from_title_area(html, char_range=750):
     try:
         tags = ["h1", "h2", "h3"]
         for tag in tags:
-            pattern = u'<{tag}[^>]*>.*?</{tag}>(.*)'.format(tag=tag)
+            pattern = u'<{tag}[^>]*>(.*?)</{tag}>(.*)'.format(tag=tag)
             tag_matches = re.finditer(pattern, html, re.DOTALL | re.UNICODE | re.IGNORECASE)
             for tag_match in tag_matches:
-                html_below = tag_match.group(1).strip()
+                html_below = tag_match.group(1).strip() + tag_match.group(2).strip()
                 html_for_scan = re.sub(consts.SCRIPT_CLEANER, " ", html_below)
                 html_for_scan = re.sub(consts.HTML_CLEANER, " ", html_for_scan)
                 html_for_scan = re.sub("\s+", " ", html_for_scan, flags=re.DOTALL)[:min(len(html_for_scan), char_range)]
